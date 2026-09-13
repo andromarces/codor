@@ -488,6 +488,64 @@ test.describe('v2 controls', () => {
     await expect(toggle).toBeChecked();
     await expect(dialog.getByTestId('spawn-folder-.hidden-project')).toBeVisible();
   });
+
+  test('a custom thinking variant applies on Enter without submitting and survives configure', async ({ page }, testInfo) => {
+    await openRoom(page);
+    const dialog = await openSpawn(page);
+    // The fixture harness without thinking offers no custom entry.
+    await expect(dialog.getByTestId('spawn-thinking-custom')).toHaveCount(0);
+    await dialog.getByTestId('spawn-harness-thinky').click();
+    const custom = dialog.getByTestId('spawn-thinking-custom');
+    await expect(custom).toBeVisible();
+    // Keyboard reaches it.
+    await custom.focus();
+    await expect(custom).toBeFocused();
+    await custom.fill('extreme');
+    // Enter applies without submitting the host form.
+    await custom.press('Enter');
+    await expect(page.getByTestId('spawn-dialog')).toBeVisible();
+    await expect(dialog.getByTestId('spawn-thinking-value')).toHaveText('extreme');
+    // A fixed pick replaces the custom value; Default clears it.
+    await dialog.getByTestId('spawn-thinking-range').fill('1');
+    await expect(dialog.getByTestId('spawn-thinking-value')).toHaveText('low');
+    await expect(custom).toHaveValue('');
+    await custom.fill('extreme');
+    await expect(custom).toHaveValue('extreme');
+    await dialog.getByTestId('spawn-thinking-range').fill('0');
+    await expect(dialog.getByTestId('spawn-thinking-value')).toHaveText('Default');
+    await expect(custom).toHaveValue('');
+
+    // Persist a custom value, then prove configure reopens with its text visible.
+    await custom.fill('extreme');
+    const handle = `customthink${String(testInfo.workerIndex)}${String(testInfo.retry)}`;
+    await dialog.getByTestId('spawn-handle').fill(handle);
+    await dialog.getByTestId('spawn-go').click();
+    await expect(page.getByTestId(`member-${handle}`)).toBeVisible({ timeout: 15_000 });
+
+    await page.getByTestId(`member-${handle}-menu`).click();
+    await page.getByRole('menuitem', { name: 'Configure…' }).click();
+    const configure = page.getByTestId('configure-dialog');
+    await expect(configure).toBeVisible();
+    await expect(configure.getByTestId('configure-thinking-value')).toHaveText('extreme');
+    await expect(configure.getByTestId('configure-thinking-custom')).toHaveValue('extreme');
+    await configure.getByTestId('configure-close').click();
+  });
+
+  test('a malformed custom variant is refused before it can be submitted', async ({ page }) => {
+    // Native validation blocks submit, so a value the protocol would reject
+    // never reaches the payload as a silent Default.
+    await openRoom(page);
+    const dialog = await openSpawn(page);
+    await dialog.getByTestId('spawn-harness-thinky').click();
+    const custom = dialog.getByTestId('spawn-thinking-custom');
+    await custom.fill('bad#value');
+    await expect(custom).toHaveJSProperty('validity.valid', false);
+    await expect(custom).toHaveJSProperty('validity.patternMismatch', true);
+    await dialog.getByTestId('spawn-handle').fill('badvariantprobe');
+    await dialog.getByTestId('spawn-go').click();
+    await expect(page.getByTestId('spawn-dialog')).toBeVisible();
+    await expect(page.getByTestId('member-badvariantprobe')).toHaveCount(0);
+  });
 });
 
 test.describe('all three dialogs share one control', () => {

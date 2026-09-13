@@ -76,6 +76,7 @@ const thinky = Object.assign(new FakeAdapter('thinky', {
   resume: false,
   thinking: true,
   thinking_levels: ['low', 'medium', 'high', 'xhigh'],
+  thinking_custom: true,
   policies: {
     'read-only': null,
     'workspace-write': null,

@@ -10,7 +10,9 @@
  */
 import {
   DEFAULT_THINKING_LEVELS,
+  normalizeThinkingLevel,
   PolicySchema,
+  ThinkingLevelSchema,
   type AgentPreset,
   type AgentPresetInput,
   type Member,
@@ -43,6 +45,7 @@ export interface AdapterLike {
   capabilities: {
     thinking?: boolean;
     thinking_levels?: readonly ThinkingLevel[];
+    thinking_custom?: boolean;
     resume?: boolean;
     /** What each policy ACTUALLY becomes on this harness. `null` means the harness
      *  does not distinguish it at all — the safety-critical case. */
@@ -100,14 +103,23 @@ export function thinkingLevelsFor(adapter: AdapterLike | undefined): readonly Th
  *
  * One place decides this, so spawn, channel-create and configure cannot disagree
  * about whether a level is acceptable — which is how a level the harness rejects
- * gets submitted from one dialog but not another.
+ * gets submitted from one dialog but not another. Values normalize first:
+ * outer whitespace trims, a recognized name folds case, blank becomes Default,
+ * and a bounded custom name passes only for a `thinking_custom` adapter.
  */
 export function supportedThinking(
   adapter: AdapterLike | undefined,
   value: string,
 ): ThinkingLevel | undefined {
+  if (value.trim() === '') return undefined;
+  const normalized = normalizeThinkingLevel(value);
   const levels = thinkingLevelsFor(adapter);
-  return levels.includes(value as ThinkingLevel) ? (value as ThinkingLevel) : undefined;
+  if (levels.includes(normalized as ThinkingLevel)) return normalized as ThinkingLevel;
+  if (adapter?.capabilities.thinking === true && adapter.capabilities.thinking_custom === true
+    && ThinkingLevelSchema.safeParse(normalized).success) {
+    return normalized as ThinkingLevel;
+  }
+  return undefined;
 }
 
 const isAbsolute = (cwd: string | undefined): cwd is string =>
@@ -449,8 +461,19 @@ export function acpLaunchFromConfig(config: AgentConfig): {
 export function reconcileConfig(config: AgentConfig, nextHarness: string, adapters: readonly AdapterLike[]): AgentConfig {
   if (nextHarness === config.harness) return config;
   const adapter = adapters.find((candidate) => candidate.id === nextHarness);
-  const levels = thinkingLevelsFor(adapter);
-  const thinking = levels.includes(config.thinking as ThinkingLevel) ? config.thinking : '';
+  const raw = config.thinking.trim();
+  let thinking = '';
+  if (raw !== '') {
+    const normalized = normalizeThinkingLevel(raw);
+    const levels = thinkingLevelsFor(adapter);
+    if (levels.includes(normalized as ThinkingLevel)) {
+      thinking = normalized;
+    } else if (adapter?.capabilities.thinking === true
+      && adapter.capabilities.thinking_custom === true
+      && ThinkingLevelSchema.safeParse(normalized).success) {
+      thinking = normalized;
+    }
+  }
   return { ...config, harness: nextHarness, model: '', thinking };
 }
 

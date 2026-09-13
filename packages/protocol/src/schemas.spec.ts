@@ -157,8 +157,15 @@ describe('members', () => {
     expect(parsed.thinking).toBeUndefined();
   });
 
-  it('rejects a thinking level the protocol does not define', () => {
-    expect(() => MemberSchema.parse({ ...agent, thinking: 'extreme' })).toThrow();
+  it('accepts a bounded custom variant name and rejects malformed values', () => {
+    // Verifies the opencode custom-variant contract: an unlisted name is a
+    // valid persisted value; only malformed shapes are refused. Strict
+    // adapters keep their exact-list rejections at the registry gate.
+    expect(MemberSchema.parse({ ...agent, thinking: 'extreme' }).thinking).toBe('extreme');
+    expect(MemberSchema.parse({ ...agent, thinking: ' HIGH ' }).thinking).toBe('high');
+    for (const bad of ['has space', 'bad#value', '-lead', 'a\nb', 'x'.repeat(65)]) {
+      expect(MemberSchema.safeParse({ ...agent, thinking: bad }).success, bad).toBe(false);
+    }
   });
 
   it('validates a private nonnegative ACP cumulative usage cursor', () => {
@@ -591,11 +598,18 @@ describe('room config', () => {
     ).toBe(false);
     // harn:end one-control-chooses-an-agent-everywhere
 
-    // A starting agent takes the same thinking vocabulary a spawned one does.
+    // A starting agent takes the same thinking vocabulary a spawned one does:
+    // a custom variant name is valid, only malformed shapes are refused.
     expect(
       CreateRoomRequestSchema.safeParse({
         ...base,
         starting_agent: { harness: 'claude-code', handle: 'codor', thinking: 'ludicrous' },
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateRoomRequestSchema.safeParse({
+        ...base,
+        starting_agent: { harness: 'claude-code', handle: 'codor', thinking: 'bad#value' },
       }).success,
     ).toBe(false);
     expect(
@@ -795,7 +809,13 @@ describe('spawn control vocabularies', () => {
       const withThinking: SpawnOpts = { cwd: '/work', thinking };
       expect(ThinkingLevelSchema.parse(withThinking.thinking)).toBe(thinking);
     }
-    expect(ThinkingLevelSchema.safeParse('extreme').success).toBe(false);
+    // Unlisted custom variant names are valid wire values; malformed shapes are not.
+    expect(ThinkingLevelSchema.parse('extreme')).toBe('extreme');
+    expect(ThinkingLevelSchema.parse(' HIGH ')).toBe('high');
+    expect(ThinkingLevelSchema.parse('Minimal')).toBe('Minimal');
+    for (const bad of ['has space', 'bad#value', '-lead', 'a\tb', '', 'x'.repeat(65)]) {
+      expect(ThinkingLevelSchema.safeParse(bad).success, bad).toBe(false);
+    }
   });
   // harn:end harness-declares-supported-thinking-levels
 });

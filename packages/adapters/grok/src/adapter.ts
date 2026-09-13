@@ -14,7 +14,7 @@ import type {
   SpawnOpts,
   WireEvent,
 } from '@codor/protocol';
-import { PolicySchema } from '@codor/protocol';
+import { normalizeThinkingLevel, PolicySchema, ThinkingLevelSchema } from '@codor/protocol';
 
 import { createTurnTranslator } from './translate.js';
 
@@ -27,10 +27,24 @@ export function grokApprovalArgs(policy: string | undefined): string[] {
 }
 
 // harn:assume canonical-spawn-controls-enforced ref=grok-spawn-control-mapping
+export const GROK_THINKING_LEVELS = ['low', 'medium', 'high'] as const;
+
 export function grokArgs(session: Session, payload: string): string[] {
   const args = ['-p', payload, '--output-format', 'streaming-json', '--no-auto-update'];
   if (session.model !== undefined) args.push('--model', session.model);
-  if (session.thinking !== undefined) args.push('--effort', session.thinking);
+  if (session.thinking !== undefined) {
+    // Revalidated at every argv build: the attach/rebuild path never passes
+    // through spawn, so a stored unlisted value must fail here, not at the CLI.
+    const thinking = normalizeThinkingLevel(session.thinking);
+    if (!ThinkingLevelSchema.safeParse(thinking).success ||
+      !(GROK_THINKING_LEVELS as readonly string[]).includes(thinking)) {
+      throw new Error(
+        `adapter 'grok' does not support thinking level '${session.thinking}'; ` +
+        `valid levels: ${GROK_THINKING_LEVELS.join(', ')}`,
+      );
+    }
+    args.push('--effort', thinking);
+  }
   args.push(...grokApprovalArgs(session.policy));
   if (session.session_ref !== undefined) args.push('--resume', session.session_ref);
   return args;
@@ -51,7 +65,7 @@ export class GrokAdapter implements HarnessAdapter {
     extensions: false,
     // harn:assume harness-declares-supported-thinking-levels ref=grok-thinking-level-declaration
     thinking: true,
-    thinking_levels: ['low', 'medium', 'high'] as const,
+    thinking_levels: GROK_THINKING_LEVELS,
     // harn:end harness-declares-supported-thinking-levels
     live_inbox: false,
     // Grok exposes --always-approve, but its CLI does not document a native
@@ -74,19 +88,24 @@ export class GrokAdapter implements HarnessAdapter {
 
   spawn(opts: SpawnOpts): Session {
     grokApprovalArgs(opts.policy);
-    if (opts.thinking !== undefined &&
-      !(this.capabilities.thinking_levels as readonly string[]).includes(opts.thinking)) {
-      throw new Error(
-        `adapter 'grok' does not support thinking level '${opts.thinking}'; ` +
-        `valid levels: ${this.capabilities.thinking_levels.join(', ')}`,
-      );
+    let thinking: Session['thinking'];
+    if (opts.thinking !== undefined) {
+      const normalized = normalizeThinkingLevel(opts.thinking);
+      if (!ThinkingLevelSchema.safeParse(normalized).success ||
+        !(this.capabilities.thinking_levels as readonly string[]).includes(normalized)) {
+        throw new Error(
+          `adapter 'grok' does not support thinking level '${opts.thinking}'; ` +
+          `valid levels: ${this.capabilities.thinking_levels.join(', ')}`,
+        );
+      }
+      thinking = normalized;
     }
     return {
       harness: this.id,
       cwd: opts.cwd,
       model: opts.model,
       policy: opts.policy,
-      thinking: opts.thinking,
+      thinking,
     };
   }
 
@@ -106,7 +125,15 @@ export class GrokAdapter implements HarnessAdapter {
     payload: string,
     hooks: AdapterTurnHooks = {},
   ): AsyncIterable<WireEvent> {
-    const args = grokArgs(session, payload);
+    let args: string[];
+    try {
+      args = grokArgs(session, payload);
+    } catch (error) {
+      const translator = createTurnTranslator(session.session_ref);
+      const detail = error instanceof Error ? error.message : String(error);
+      yield* translator.end({ status: 'failed', final_text: detail });
+      return;
+    }
     // harn:assume grok-cli-resolves-windows-command-shims ref=grok-windows-cli-spawn-provider
     // harn:assume adapter-children-inherit-session-env ref=grok-child-environment
     const child = spawn(this.command, args, {

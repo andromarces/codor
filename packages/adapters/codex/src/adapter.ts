@@ -17,7 +17,7 @@ import type {
   ThinkingLevel,
   WireEvent,
 } from '@codor/protocol';
-import { PolicySchema, ThinkingLevelSchema } from '@codor/protocol';
+import { PolicySchema, normalizeThinkingLevel, ThinkingLevelSchema } from '@codor/protocol';
 
 import {
   CodexAppServerClient,
@@ -97,10 +97,12 @@ export function codexPolicyOptions(policy: string | undefined): CodexPolicyOptio
   };
 }
 
-function validateThinking(thinking: ThinkingLevel | undefined): void {
-  if (thinking === undefined) return;
-  ThinkingLevelSchema.parse(thinking);
-  assertThinkingLevel(thinking);
+function validateThinking(thinking: ThinkingLevel | undefined): ThinkingLevel | undefined {
+  if (thinking === undefined) return undefined;
+  const normalized = normalizeThinkingLevel(thinking) as ThinkingLevel;
+  ThinkingLevelSchema.parse(normalized);
+  assertThinkingLevel(normalized);
+  return normalized;
 }
 // harn:end canonical-spawn-controls-enforced
 
@@ -466,13 +468,13 @@ export class CodexAdapter implements HarnessAdapter {
 
   spawn(opts: SpawnOpts): Session {
     codexPolicyOptions(opts.policy);
-    validateThinking(opts.thinking);
+    const thinking = validateThinking(opts.thinking);
     return {
       harness: this.id,
       cwd: opts.cwd,
       model: opts.model,
       policy: opts.policy,
-      thinking: opts.thinking,
+      thinking,
     };
   }
 
@@ -507,6 +509,16 @@ export class CodexAdapter implements HarnessAdapter {
   ): AsyncIterable<WireEvent> {
     const runtime = this.runtimeFor(session);
     if (runtime.active !== null) throw new Error('a Codex turn is already in flight for this member');
+    // Revalidated before touching the runtime: rebuilt sessions bypass spawn,
+    // so a stored unlisted value must fail here rather than reach the app server.
+    let thinking: ThinkingLevel | undefined;
+    try {
+      thinking = validateThinking(session.thinking);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      yield { type: 'run.completed', status: 'failed', error: detail };
+      return;
+    }
     await this.prepareRuntime(runtime, session);
 
     runtime.context.latestResolvedModel = runtime.threadModel;
@@ -533,7 +545,7 @@ export class CodexAdapter implements HarnessAdapter {
           threadId: runtime.threadId,
           input: [{ type: 'text', text: payload, text_elements: [] }],
           cwd: session.cwd,
-          ...this.turnOptions(session),
+          ...this.turnOptions(session, thinking),
         });
         turn.turnId ??= responseId(response, 'turn');
       } catch (error) {
@@ -703,13 +715,13 @@ export class CodexAdapter implements HarnessAdapter {
     };
   }
 
-  private turnOptions(session: Session): Record<string, unknown> {
+  private turnOptions(session: Session, thinking: ThinkingLevel | undefined): Record<string, unknown> {
     const policy = codexPolicyOptions(session.policy);
     return {
       approvalPolicy: policy.approvalPolicy,
       sandboxPolicy: policy.sandboxPolicy,
       ...(session.model !== undefined && { model: session.model }),
-      ...(session.thinking !== undefined && { effort: session.thinking }),
+      ...(thinking !== undefined && { effort: thinking }),
     };
   }
 

@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -82,6 +82,41 @@ console.log(JSON.stringify({type:'response.completed',status:'completed',usage:{
     for await (const event of new GrokAdapter('/definitely/missing/codor-grok').deliver(
       new GrokAdapter().spawn({ cwd: process.cwd() }), 'hello')) events.push(event);
     expect(events.at(-1)).toMatchObject({ type: 'run.completed', status: 'failed' });
+  });
+
+  // Requirement: the attach/rebuild path revalidates thinking at argv build,
+  // so a stored unlisted value fails the turn instead of reaching the CLI.
+  // Non-redundant: the only deliver-path thinking validation proof for grok.
+  it('revalidates thinking on the attach path and never spawns for an unlisted level', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codor-grok-attach-'));
+    dirs.push(dir);
+    const marker = join(dir, 'spawned');
+    const argvLog = join(dir, 'argv.json');
+    const command = executable(`
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(marker)}, 'spawned');
+fs.writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)));
+process.stderr.write('boom\\n');
+process.exit(7);
+`);
+    const adapter = new GrokAdapter(command);
+    const attached = adapter.attach('ses_attach');
+    attached.cwd = process.cwd();
+    attached.thinking = 'extreme' as 'high';
+    const events: WireEvent[] = [];
+    for await (const event of adapter.deliver(attached, 'hi')) events.push(event);
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.completed', status: 'failed', final_text: expect.stringContaining('extreme'),
+    });
+    expect(() => readFileSync(marker)).toThrow();
+
+    const normalized = adapter.attach('ses_normalized');
+    normalized.cwd = process.cwd();
+    normalized.thinking = ' HIGH ' as 'high';
+    const runEvents: WireEvent[] = [];
+    for await (const event of adapter.deliver(normalized, 'hi')) runEvents.push(event);
+    expect(runEvents.at(-1)).toMatchObject({ type: 'run.completed', status: 'failed', final_text: 'boom' });
+    expect(JSON.parse(readFileSync(argvLog, 'utf8'))).toContain('high');
   });
 
   it('keeps supervision when a completed child still has an active delivery', async () => {

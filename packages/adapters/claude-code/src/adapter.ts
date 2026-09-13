@@ -26,7 +26,7 @@ import type {
   SpawnOpts,
   WireEvent,
 } from '@codor/protocol';
-import { PolicySchema, ThinkingLevelSchema } from '@codor/protocol';
+import { PolicySchema, normalizeThinkingLevel, ThinkingLevelSchema } from '@codor/protocol';
 
 import { probeClaudeLimits } from './limits-probe.js';
 import { peekClaudeContextUsage } from './peek.js';
@@ -94,9 +94,11 @@ function claudeThinkingOptions(
   thinking: Session['thinking'],
 ): Pick<ClaudeOptions, 'thinking' | 'effort' | 'settings'> {
   if (thinking === undefined) return {};
-  ThinkingLevelSchema.parse(thinking);
-  assertThinkingLevel(thinking);
-  if (thinking === 'ultracode') {
+  // Normalized here as well as in spawn: rebuilt sessions reach this path directly.
+  const normalized = normalizeThinkingLevel(thinking);
+  ThinkingLevelSchema.parse(normalized);
+  assertThinkingLevel(normalized);
+  if (normalized === 'ultracode') {
     return {
       thinking: { type: 'adaptive' },
       effort: 'xhigh',
@@ -105,7 +107,7 @@ function claudeThinkingOptions(
   }
   return {
     thinking: { type: 'adaptive' },
-    effort: thinking as Exclude<Session['thinking'], 'ultra' | 'ultracode' | undefined>,
+    effort: normalized as unknown as Exclude<(typeof CLAUDE_THINKING_LEVELS)[number], 'ultracode'>,
   };
 }
 // harn:end canonical-spawn-controls-enforced
@@ -427,16 +429,19 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
 
   spawn(opts: SpawnOpts): Session {
     claudePermissionMode(opts.policy);
+    let thinking: Session['thinking'];
     if (opts.thinking !== undefined) {
-      ThinkingLevelSchema.parse(opts.thinking);
-      assertThinkingLevel(opts.thinking);
+      const normalized = normalizeThinkingLevel(opts.thinking);
+      ThinkingLevelSchema.parse(normalized);
+      assertThinkingLevel(normalized);
+      thinking = normalized;
     }
     return {
       harness: this.id,
       cwd: opts.cwd,
       model: opts.model,
       policy: opts.policy,
-      thinking: opts.thinking,
+      thinking,
     };
   }
 

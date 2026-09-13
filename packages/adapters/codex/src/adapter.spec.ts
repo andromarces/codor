@@ -617,6 +617,31 @@ describe('persistent Codex app-server lifecycle', () => {
       error: 'codex missing',
     });
   });
+
+  // Requirement: a rebuilt session carrying an unlisted thinking value fails
+  // the turn before any app-server request, and a padded recognized value is
+  // normalized onto the turn. Non-redundant: the only deliver-path thinking
+  // validation proof for codex.
+  it('revalidates thinking on rebuilt sessions before starting a turn', async () => {
+    const server = createFakeCodexAppServer();
+    const { adapter } = fixtureAdapter(server);
+    const rebuilt: Session = { harness: 'codex', cwd: '/work', thinking: 'extreme' as 'high' };
+    const events = await collect(adapter, rebuilt, 'stale');
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.completed',
+      status: 'failed',
+      error: expect.stringContaining('extreme'),
+    });
+    expect(server.messages.some((message) => message.method === 'turn/start')).toBe(false);
+
+    const padded: Session = { harness: 'codex', cwd: '/work', thinking: ' HIGH ' as 'high' };
+    const run = collect(adapter, padded, 'normalized');
+    await server.waitForRequest('turn/start');
+    const start = server.messages.find((message) => message.method === 'turn/start');
+    expect((start?.params as { effort?: string }).effort).toBe('high');
+    completeTurn(server, 'turn-1');
+    expect((await run).at(-1)).toMatchObject({ status: 'completed' });
+  });
 });
 // harn:end codex-app-server-is-the-member-runtime
 

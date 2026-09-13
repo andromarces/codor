@@ -10,13 +10,47 @@ export type Policy = z.infer<typeof PolicySchema>;
 // harn:assume harness-declares-supported-thinking-levels ref=adapter-thinking-level-contract
 /** Legacy choices for thinking-capable third-party adapters without an exact declaration. */
 export const DEFAULT_THINKING_LEVELS = ['low', 'medium', 'high'] as const;
-export const ThinkingLevelSchema = z.enum([
+/** Every recognized fixed level across all strict adapters. */
+export const KNOWN_THINKING_LEVELS = [
   ...DEFAULT_THINKING_LEVELS,
   'xhigh',
   'max',
   'ultra',
   'ultracode',
-]);
+] as const;
+/** Bound for an operator-supplied custom variant name (OpenCode exact key). */
+export const THINKING_CUSTOM_MAX_LENGTH = 64;
+
+/**
+ * Normalize one submitted thinking value. Trims outer whitespace; a trimmed
+ * value that case-insensitively equals a recognized level folds to that level
+ * (`" HIGH "` becomes `high`); every other name keeps its case and punctuation
+ * because OpenCode resolves variants by exact object key. Blank stays blank so
+ * callers can map it to Default (no value).
+ */
+export function normalizeThinkingLevel(value: string): string {
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if ((KNOWN_THINKING_LEVELS as readonly string[]).includes(lower)) return lower;
+  return trimmed;
+}
+
+const CustomThinkingValueSchema = z.string().regex(
+  // No whitespace inside, no `#` (the v2 model#variant separator), no control
+  // characters, no leading `-` (flag-injection shape), bounded length.
+  new RegExp(`^(?!-)[^\\s#\\x00-\\x1F\\x7F\\x80-\\x9F]{1,${String(THINKING_CUSTOM_MAX_LENGTH)}}$`),
+  'custom thinking value has an invalid format',
+);
+
+/** The recognized fixed levels only. Declared `thinking_levels` must stay in this set. */
+export const KnownThinkingLevelSchema = z.enum(KNOWN_THINKING_LEVELS);
+export type KnownThinkingLevel = z.infer<typeof KnownThinkingLevelSchema>;
+
+/** Persisted and wire value: a recognized level or a bounded custom variant name. */
+export const ThinkingLevelSchema = z.preprocess(
+  (value) => (typeof value === 'string' ? normalizeThinkingLevel(value) : value),
+  z.union([z.enum(KNOWN_THINKING_LEVELS), CustomThinkingValueSchema]),
+);
 export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
 
 /** Harness-native session/rollout id — the resume token and identity anchor. */
@@ -120,6 +154,12 @@ export interface AdapterCapabilities {
   thinking: boolean;
   /** Exact accepted values. Absent preserves low/medium/high for older adapters. */
   thinking_levels?: readonly ThinkingLevel[];
+  /**
+   * When true, the harness also accepts a bounded custom variant name outside
+   * the declared list (OpenCode exact-key variants). The registry gate enforces
+   * this; strict adapters keep their exact-list rejections.
+   */
+  thinking_custom?: boolean;
   // harn:end harness-declares-supported-thinking-levels
   // harn:assume harness-declares-what-a-policy-becomes ref=adapter-policy-capability
   // What each canonical policy ACTUALLY becomes for this harness — the native mode it

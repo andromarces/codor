@@ -73,13 +73,15 @@ describe('individual agent preset schemas', () => {
     }).success).toBe(false);
   });
 
-  it('rejects invalid identity and bounded model values', () => {
+  it('rejects invalid identity and bounded model values, but accepts custom thinking', () => {
     expect(AgentPresetInputSchema.safeParse({ ...nativeInput, handle: 'switchboard' }).success)
       .toBe(false);
     expect(AgentPresetInputSchema.safeParse({ ...nativeInput, model: '--danger' }).success)
       .toBe(false);
     expect(AgentPresetInputSchema.safeParse({ ...nativeInput, label: '' }).success).toBe(false);
-    expect(AgentPresetInputSchema.safeParse({ ...nativeInput, thinking: 'extreme' }).success)
+    expect(AgentPresetInputSchema.parse({ ...nativeInput, thinking: 'extreme' }).thinking)
+      .toBe('extreme');
+    expect(AgentPresetInputSchema.safeParse({ ...nativeInput, thinking: 'bad#value' }).success)
       .toBe(false);
   });
 

@@ -371,6 +371,65 @@ describe('one rule decides an acceptable thinking level (Tier-1 #4)', () => {
     expect(supportedThinking(undeclared, 'high')).toBe('high');
     expect(supportedThinking(claude, '')).toBeUndefined();
   });
+
+  // Requirement: custom values pass only for thinking_custom adapters, with
+  // normalization. Non-redundant: the only UI-side custom-gating proof.
+  it('passes a normalized custom value only for a thinking_custom adapter', () => {
+    const custom = {
+      id: 'opencode',
+      capabilities: { thinking: true, thinking_levels: ['low', 'medium', 'high'], thinking_custom: true },
+    } satisfies AdapterLike;
+    expect(supportedThinking(custom, 'extreme')).toBe('extreme');
+    expect(supportedThinking(custom, ' HIGH ')).toBe('high');
+    expect(supportedThinking(custom, 'Minimal')).toBe('Minimal');
+    expect(supportedThinking(custom, 'bad#value')).toBeUndefined();
+    expect(supportedThinking(custom, 'has space')).toBeUndefined();
+    expect(supportedThinking(claude, 'extreme')).toBeUndefined();
+  });
+
+  // Requirement: harness switches keep custom values only where accepted.
+  // Non-redundant: the only reconcileConfig custom proof.
+  it('keeps a custom value across harness reconciliation only where accepted', () => {
+    const custom = {
+      id: 'opencode',
+      capabilities: { thinking: true, thinking_levels: ['low', 'medium', 'high'], thinking_custom: true },
+    } satisfies AdapterLike;
+    expect(reconcileConfig(
+      { harness: 'claude-code', model: '', thinking: 'extreme', policy: '' },
+      'opencode',
+      [claude, custom],
+    ).thinking).toBe('extreme');
+    expect(reconcileConfig(
+      { harness: 'opencode', model: '', thinking: 'extreme', policy: '' },
+      'claude-code',
+      [claude, custom],
+    ).thinking).toBe('');
+  });
+
+  // Requirement: the custom value reaches the payload and survives model
+  // edits. Non-redundant: the only spawn-payload custom proof.
+  it('carries a custom value into the spawn payload and preserves it across model edits', () => {
+    const custom = {
+      id: 'opencode',
+      capabilities: { thinking: true, thinking_levels: ['low', 'medium', 'high'], thinking_custom: true },
+      models: ['opencode/a', 'opencode/b'],
+    } satisfies AdapterLike;
+    const spec = buildSpawnSpec({
+      config: { harness: 'opencode', model: 'opencode/a', thinking: 'extreme', policy: '' },
+      handle: 'scout', cwd: '/p', adapters: [custom], members: [],
+    });
+    expect(spec.thinking).toBe('extreme');
+    const retuned = buildSpawnSpec({
+      config: { harness: 'opencode', model: 'opencode/b', thinking: 'extreme', policy: '' },
+      handle: 'scout', cwd: '/p', adapters: [custom], members: [],
+    });
+    expect(retuned.thinking).toBe('extreme');
+    const strict = buildSpawnSpec({
+      config: { harness: 'claude-code', model: '', thinking: 'extreme', policy: '' },
+      handle: 'scout', cwd: '/p', adapters: [claude], members: [],
+    });
+    expect(strict.thinking).toBeUndefined();
+  });
 });
 
 describe('a pending spawn resolves only on its own evidence (Tier-1 #5)', () => {

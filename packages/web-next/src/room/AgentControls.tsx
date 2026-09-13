@@ -12,7 +12,7 @@
  */
 import { Ban, LoaderCircle, Lock, PencilLine, RefreshCw, Zap } from 'lucide-react';
 import { useState } from 'react';
-import type { AgentPreset } from '@codor/protocol';
+import { THINKING_CUSTOM_MAX_LENGTH, type AgentPreset } from '@codor/protocol';
 
 import { ThinkingSlider } from './ThinkingSlider.js';
 import {
@@ -243,6 +243,10 @@ export function AgentControls(props: {
   const isAcp = config.harness === 'acp' || config.harness.startsWith('acp:');
   const models = adapter?.models ?? [];
   const levels = thinkingLevelsFor(adapter);
+  const customThinking = adapter?.capabilities.thinking === true
+    && adapter.capabilities.thinking_custom === true;
+  const thinkingIsCustom = config.thinking !== ''
+    && !(levels as readonly string[]).includes(config.thinking);
   const [modelQuery, setModelQuery] = useState('');
 
   const set = (patch: Partial<AgentConfig>) => { props.onChange({ ...config, ...patch }); };
@@ -360,12 +364,31 @@ export function AgentControls(props: {
             Not supported by this harness.
           </p>
         ) : (
-          <ThinkingSlider
-            levels={levels}
-            value={config.thinking}
-            onChange={(thinking) => { set({ thinking }); }}
-            idPrefix={id}
-          />
+          <>
+            <ThinkingSlider
+              levels={levels}
+              value={config.thinking}
+              onChange={(thinking) => { set({ thinking }); }}
+              idPrefix={id}
+            />
+            {customThinking && (
+              <>
+                <input
+                  className="nx-input"
+                  value={thinkingIsCustom ? config.thinking : ''}
+                  onChange={(e) => { set({ thinking: e.target.value }); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                  placeholder="Custom variant"
+                  aria-label="Custom thinking variant"
+                  data-testid={`${id}-thinking-custom`}
+                  maxLength={THINKING_CUSTOM_MAX_LENGTH}
+                  pattern={`(?!-)[^\\s#\\x00-\\x1F\\x7F\\x80-\\x9F]{1,${String(THINKING_CUSTOM_MAX_LENGTH)}}`}
+                  title="Exact variant name: up to 64 characters, no spaces, no #, not starting with -"
+                />
+                <p className="nx-note">An exact variant name for this harness. A fixed pick replaces it; Default clears it.</p>
+              </>
+            )}
+          </>
         )}
       </div>
     </>

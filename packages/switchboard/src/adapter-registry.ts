@@ -19,6 +19,9 @@ import {
   type AdapterCapabilities,
   DEFAULT_THINKING_LEVELS,
   type HarnessAdapter,
+  KNOWN_THINKING_LEVELS,
+  KnownThinkingLevelSchema,
+  normalizeThinkingLevel,
   PolicySchema,
   type SpawnOpts,
   ThinkingLevelSchema,
@@ -123,10 +126,14 @@ export function resolveAdapterModuleSpecifier(specifier: string, baseDir: string
 // harn:assume harness-declares-supported-thinking-levels ref=adapter-thinking-level-registry
 function validThinkingLevels(capabilities: Partial<AdapterCapabilities>): boolean {
   const levels = (capabilities as { thinking_levels?: unknown }).thinking_levels;
+  const custom = (capabilities as { thinking_custom?: unknown }).thinking_custom;
+  if (custom !== undefined && typeof custom !== 'boolean') return false;
+  if (custom === true && capabilities.thinking !== true) return false;
   if (levels === undefined) return true;
   if (!capabilities.thinking || !Array.isArray(levels) || levels.length === 0) return false;
+  // Declared lists stay fixed levels; a custom name is carried by thinking_custom, not the list.
   return new Set(levels).size === levels.length &&
-    levels.every((level) => ThinkingLevelSchema.safeParse(level).success);
+    levels.every((level) => KnownThinkingLevelSchema.safeParse(level).success);
 }
 
 function validCapabilities(value: unknown): value is AdapterCapabilities {
@@ -158,7 +165,7 @@ function validPolicyMap(value: unknown): boolean {
 // harn:end harness-declares-what-a-policy-becomes
 
 const validPolicies = PolicySchema.options.join(', ');
-const validThinking = ThinkingLevelSchema.options.join(', ');
+const validThinking = KNOWN_THINKING_LEVELS.join(', ');
 
 export function validateSpawnOptions(adapter: HarnessAdapter, opts: SpawnOpts): void {
   if (opts.acp_launch !== undefined && adapter.id !== 'acp') {
@@ -167,17 +174,23 @@ export function validateSpawnOptions(adapter: HarnessAdapter, opts: SpawnOpts): 
   if (opts.policy !== undefined && !PolicySchema.safeParse(opts.policy).success) {
     throw new Error(`unknown policy '${opts.policy}'; valid policies: ${validPolicies}`);
   }
-  if (opts.thinking !== undefined && !ThinkingLevelSchema.safeParse(opts.thinking).success) {
-    throw new Error(`unknown thinking level '${String(opts.thinking)}'; valid levels: ${validThinking}`);
-  }
-  if (opts.thinking !== undefined && !adapter.capabilities.thinking) {
-    throw new Error(`adapter '${adapter.id}' does not support thinking levels`);
-  }
   if (opts.thinking !== undefined) {
+    const normalized = typeof opts.thinking === 'string'
+      ? normalizeThinkingLevel(opts.thinking)
+      : opts.thinking;
+    if (normalized === '') {
+      throw new Error(`unknown thinking level '${String(opts.thinking)}'; valid levels: ${validThinking}`);
+    }
+    if (!ThinkingLevelSchema.safeParse(normalized).success) {
+      throw new Error(`unknown thinking level '${String(opts.thinking)}'; valid levels: ${validThinking}`);
+    }
+    if (!adapter.capabilities.thinking) {
+      throw new Error(`adapter '${adapter.id}' does not support thinking levels`);
+    }
     const supported = adapter.capabilities.thinking_levels ?? DEFAULT_THINKING_LEVELS;
-    if (!supported.includes(opts.thinking)) {
+    if (!supported.includes(normalized as never) && adapter.capabilities.thinking_custom !== true) {
       throw new Error(
-        `adapter '${adapter.id}' does not support thinking level '${opts.thinking}'; ` +
+        `adapter '${adapter.id}' does not support thinking level '${normalized}'; ` +
         `valid levels: ${supported.join(', ')}`,
       );
     }

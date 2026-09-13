@@ -22,12 +22,19 @@ export function ThinkingSlider(props: {
   idPrefix: string;
   disabled?: boolean;
 }) {
-  // Position 0 is always Default; the declared levels follow it.
-  const stops: readonly string[] = ['', ...props.levels];
+  // Position 0 is always Default; the declared levels follow it. An unlisted
+  // custom value rides as an extra stop past the declared levels, so it reads
+  // as itself (never as Default) and moving back to 0 or to a fixed stop
+  // replaces it.
+  const base: readonly string[] = ['', ...props.levels];
+  const listedIndex = base.indexOf(props.value);
+  const isCustom = props.value !== '' && listedIndex < 0;
+  const stops: readonly string[] = isCustom ? [...base, props.value] : base;
   const max = stops.length - 1;
-  const index = Math.max(0, stops.indexOf(props.value));
+  const index = isCustom ? max : Math.max(0, listedIndex);
   const pct = max === 0 ? 0 : index / max;
   const label = (stop: string) => (stop === '' ? 'Default' : stop);
+  const shown = isCustom ? props.value : (stops[index] ?? '');
   // Keep the visual thumb and tooltip inside the rail at both endpoints. The
   // native range uses the same half-thumb inset rather than putting its center
   // on the element's outer edge.
@@ -55,7 +62,7 @@ export function ThinkingSlider(props: {
           style={{ left: position, transform: tipTransform }}
           data-testid={`${props.idPrefix}-thinking-value`}
         >
-          {label(stops[index] ?? '')}
+          {isCustom ? shown : label(stops[index] ?? '')}
         </span>
         <input
           type="range"
@@ -68,7 +75,7 @@ export function ThinkingSlider(props: {
           // The accessible name and value text carry the level, since the visual
           // tooltip is decorative.
           aria-label="Thinking effort"
-          aria-valuetext={label(stops[index] ?? '')}
+          aria-valuetext={isCustom ? shown : label(stops[index] ?? '')}
           data-testid={`${props.idPrefix}-thinking-range`}
           onChange={(event) => props.onChange(stops[Number(event.target.value)] ?? '')}
         />

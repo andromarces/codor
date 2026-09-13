@@ -89,17 +89,18 @@ describe('adapter registry spawn controls', () => {
       adapter.id,
       adapter.capabilities.thinking,
       adapter.capabilities.thinking_levels,
+      adapter.capabilities.thinking_custom ?? false,
     ])).toEqual([
-      ['antigravity', false, undefined],
-      ['acp', false, undefined],
-      ['claude-code', true, ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']],
-      ['codex', true, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
-      ['copilot', false, undefined],
-      ['copilot-vscode', false, undefined],
-      ['cursor', false, undefined],
-      ['gemini', false, undefined],
-      ['grok', true, ['low', 'medium', 'high']],
-      ['opencode', false, undefined],
+      ['antigravity', false, undefined, false],
+      ['acp', false, undefined, false],
+      ['claude-code', true, ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'], false],
+      ['codex', true, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], false],
+      ['copilot', false, undefined, false],
+      ['copilot-vscode', false, undefined, false],
+      ['cursor', false, undefined, false],
+      ['gemini', false, undefined, false],
+      ['grok', true, ['low', 'medium', 'high'], false],
+      ['opencode', true, ['low', 'medium', 'high'], true],
     ]);
   });
 
@@ -110,13 +111,13 @@ describe('adapter registry spawn controls', () => {
     );
     expect(() => adapter!.spawn({
       cwd: '/work',
-      thinking: 'extreme' as 'high',
+      thinking: 'bad#value' as 'high',
     })).toThrow('valid levels: low, medium, high, xhigh, max, ultra, ultracode');
   });
 
   it('rejects thinking before delegating to unsupported adapters', async () => {
     const adapters = await loadAdapterRegistry();
-    for (const id of ['antigravity', 'copilot', 'copilot-vscode', 'gemini', 'opencode']) {
+    for (const id of ['antigravity', 'copilot', 'copilot-vscode', 'gemini']) {
       const adapter = adapters.find((candidate) => candidate.id === id)!;
       expect(() => adapter.spawn({ cwd: '/work', thinking: 'high' })).toThrow(
         `adapter '${id}' does not support thinking levels`,
@@ -142,6 +143,30 @@ describe('adapter registry spawn controls', () => {
     expect(() => validateSpawnOptions(legacy, { cwd: '/work', thinking: 'xhigh' })).toThrow(
       "adapter 'legacy' does not support thinking level 'xhigh'; valid levels: low, medium, high",
     );
+  });
+
+  // Requirement: gate and adapters agree on unnormalized input — the gate
+  // normalizes before the declared-list check and strict adapters normalize at
+  // spawn, so neither approves what the other refuses. Non-redundant: the only
+  // gate/adapter agreement proof.
+  it('accepts an unlisted custom value only for a thinking_custom adapter, normalized first', async () => {
+    const adapters = await loadAdapterRegistry();
+    const opencode = adapters.find((adapter) => adapter.id === 'opencode')!;
+    expect(() => opencode.spawn({ cwd: '/work', thinking: 'extreme' })).not.toThrow();
+    expect(() => opencode.spawn({ cwd: '/work', thinking: ' HIGH ' })).not.toThrow();
+    expect(() => opencode.spawn({ cwd: '/work', thinking: 'bad#value' as 'high' })).toThrow(
+      'unknown thinking level',
+    );
+    for (const id of ['claude-code', 'codex', 'grok']) {
+      const adapter = adapters.find((candidate) => candidate.id === id)!;
+      expect(() => adapter.spawn({ cwd: '/work', thinking: 'extreme' as 'high' })).toThrow(
+        `adapter '${id}' does not support thinking level 'extreme'`,
+      );
+    }
+    for (const id of ['claude-code', 'codex', 'grok'] as const) {
+      const adapter = adapters.find((candidate) => candidate.id === id)!;
+      expect(adapter.spawn({ cwd: '/work', thinking: ' HIGH ' }).thinking).toBe('high');
+    }
   });
 });
 // harn:end harness-declares-supported-thinking-levels

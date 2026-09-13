@@ -50,46 +50,73 @@ Codor emits no policy flag for `read-only` or `workspace-write`, and maps
 2026-09-12 probe with opencode `0.0.0-dev-202609102034`: `--variant`
 names are per-model variant presets (see `opencode models --verbose`), not
 a fixed effort scale, and an unsupported or unknown value is accepted and
-silently ignored with exit 0, so a fixed low/medium/high control cannot
-tell the operator whether the value will be used. The adapter therefore
-declares `thinking:false` and never sends `--variant` until variants are
-exposed per model.
+silently ignored with exit 0 on the v1 line.
 
-Upgrade note: an existing opencode member with a persisted `thinking`
-value fails loudly on its next turn (`validateSpawnOptions` on rebuild,
-`openCodeArgs` on attach) with `adapter 'opencode' does not support
-thinking levels`. Recovery is a manual save in the Configure agent
-dialog, which submits `thinking: null` for an unsupported level and
-clears the stored value.
-
-Presets behave differently: applying an opencode preset with a stored
-`thinking` value is refused with a named message rather than a failed
-turn, and the preset editor blocks save while the unsupported value is
-present. Clear it by switching the draft to another harness and back
-(`reconcileConfig` drops the level, and also clears the model, which
-must be reselected), by replacing the preset through the API without
-`thinking`, or by removing it from the default roster before deleting
-it. A saved default roster holding such a preset fails channel creation
-at roster expansion, not one turn.
+Thinking support (restored 2026-09-13): the adapter declares `thinking: true`
+with the fixed set `low`, `medium`, `high` plus a bounded custom entry
+(`thinking_custom`). A custom name is an exact per-model variant key:
+normalization trims outer whitespace, folds a recognized level name to
+lowercase (`" HIGH "` becomes `high`), and otherwise preserves case and
+punctuation. Control characters, inner whitespace, a leading `-`, `#`, and
+names over 64 characters are rejected. Default omits the variant. OpenCode
+controls the effective behavior, including its native configuration.
 
 ## Invocation
 
-New turn:
+Invocation is per detected line. The version probe runs with the session cwd
+and environment, and successful detections cache per adapter instance under a
+bounded LRU (16 entries) keyed by PATH (last case-insensitive match on
+win32) plus cwd exactly when cwd can change resolution (a relative command,
+or a relative or empty PATH entry; always on Windows, where the launcher
+searches cwd first). An unknown result is never cached, so each unrecognized
+turn retries with up to two probes. Codor probes `<command> --version`
+(fixed argv, no shell, hard timeout, capped output):
+
+- `opencode v2.0.3` / `opencode2 v0.0.0-dev-19272` shape: v2.
+- `1.18.30` / `0.0.0-dev-202609102034` bare-version shape: v1.
+- Any other banner (including a future `opencode v3.0.0`) falls back to
+  `run --help`: `--variant` without `#variant` means v1, `#variant` without
+  `--variant` means v2, both or neither means unknown.
+
+New turn (v1):
 
 ```text
-opencode run --format json [--model PROVIDER/MODEL] [--auto] PAYLOAD
+opencode run --format json [--model PROVIDER/MODEL] [--auto] [--variant VALUE] PAYLOAD
 ```
 
-Continued turn:
+New turn (v2, `--variant` does not exist; the variant rides the model):
 
 ```text
-opencode run --format json [--model PROVIDER/MODEL] [--auto] --session SESSION_ID PAYLOAD
+opencode run --format json [--model PROVIDER/MODEL#VALUE] [--auto] PAYLOAD
 ```
 
-Codor never sends `--variant`. The CLI accepts it, but the name must come
-from the selected model's own `variants` object (`opencode models
---verbose`), which varies per model and install and admits operator-defined
-custom names; an unknown name is ignored with exit 0.
+Continued turns add `--session SESSION_ID` on both lines. An unrecognized
+line or a failed probe fails the turn with `opencode line not recognized`
+plus a version token or `(probe failed)` — never raw probe output.
+
+v2 with the Default model and a thinking value resolves the default per turn
+with `<command> api GET /api/model/default` and sends
+`--model <providerID>/<id>#<value>` using `data.id` (the selectable catalog
+reference, not `data.modelID`). The resolved model is never persisted;
+`session.model` stays undefined. When `data` is null, the call fails, or the
+output does not parse or validate, the turn fails with a fixed message that
+an explicit model is required, and the stored thinking value is preserved.
+v1 ignores an unknown variant silently (exit 0); v2 fails the turn with
+`Variant unavailable for <model>` through the existing failed-turn path.
+Codor does not validate a value against the selected model.
+
+2026-09-13 probes (macOS): v1 `run` accepts `--variant`, `--model
+provider/model`, `--session`, `--format json`, `--auto`; v2 `run` has no
+`--variant` and takes `--model provider/model#variant`; v2 rejects
+`--variant` with usage plus non-zero exit and no turn; an unknown v2 variant
+fails the turn with `Variant unavailable for <model>`; v2 JSON error shape
+matches the translator; v2 `GET /api/model/default` returns
+`{location, data: {id, modelID, providerID, variants, ...}}` with `data`
+nullable (`opencode-go/deepseek-v4.1-flash` observed, variants `low`,
+`high`, `max`); v2 stable 2.0.3 exposes the same endpoint (`data` null in
+standalone mode); v2 has no `db` subcommand and `models` output is
+cwd-scoped. OpenCode aliases: `<provider>/<catalog id>` is the selectable
+reference, `modelID` the provider-side name.
 
 The process starts in the member's persisted cwd, stdin is closed, stdout is
 read through EOF, stderr is bounded for failure detail, and the detached process
@@ -148,7 +175,7 @@ unchanged and never derives prices from tokens.
 | ask | false | `run` exposes no question response channel |
 | approvals | spawn-time | `--auto` or CLI-owned rejection; no Codor runtime response |
 | extensions | false | completed task tools do not provide authoritative child lifecycle |
-| thinking | false | `--variant` is per-model and silently ignored when unsupported; no fixed effort set is offered |
+| thinking | true | fixed `low`/`medium`/`high` plus a bounded custom exact-key variant; v1 `--variant`, v2 `#variant` |
 
 `fixtures/live-pong-1.17.14.jsonl` is the one real authenticated capture required
 by P1.7b, using the configured free model and the tiny prompt `Reply PONG only.`.

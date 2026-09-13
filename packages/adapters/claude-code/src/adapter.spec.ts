@@ -286,8 +286,29 @@ describe('Claude Agent SDK query lifecycle', () => {
     });
   });
 
-  it('routes interrupt through query.interrupt and completes the active turn', async () => {
+  // Requirement: an attached session with padded thinking normalizes onto the
+  // query options instead of reaching the engine raw. Non-redundant: the only
+  // attached-path normalization proof for claude-code.
+  it('normalizes padded thinking from an attached session onto the query', async () => {
     const records: MockQueryRecord[] = [];
+    const factory = queryFactory(async function* (input) {
+      for await (const _user of input.prompt) {
+        yield init();
+        yield result('normalized');
+      }
+    }, records);
+    const adapter = new ClaudeCodeAdapter({ queryFactory: factory });
+    const session = tracked(adapter, adapter.attach(SESSION_ID));
+    session.cwd = process.cwd();
+    session.thinking = ' HIGH ' as 'high';
+
+    const events = await collect(adapter.deliver(session, 'hi'));
+
+    expect(events.at(-1)).toMatchObject({ final_text: 'normalized' });
+    expect(records[0]!.input.options).toMatchObject({ effort: 'high', resume: SESSION_ID });
+  });
+
+  it('routes interrupt through query.interrupt and completes the active turn', async () => {    const records: MockQueryRecord[] = [];
     let release: (() => void) | undefined;
     const stopped = new Promise<void>((resolve) => {
       release = resolve;
